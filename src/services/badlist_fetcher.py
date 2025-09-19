@@ -10,6 +10,8 @@ from pathlib import Path
 from ..constants import DEFAULT_BADLIST_URL, HTTP_TIMEOUT
 from ..utils.logger import log
 
+CACHE_FILENAME = "affected-packages-cache.json"
+
 def fetch_remote_affected_list(url=DEFAULT_BADLIST_URL):
     """
     Fetches fresh affected list from remote URL every time the tool runs.
@@ -37,16 +39,63 @@ def fetch_remote_affected_list(url=DEFAULT_BADLIST_URL):
     except Exception as e:
         raise Exception(f"Failed to fetch remote affected list: {e}")
 
+def load_cached_badlist():
+    """
+    Loads cached badlist from current directory if it exists.
+    Returns affected list dictionary or None if cache doesn't exist or is invalid.
+    """
+    cache_path = Path.cwd() / CACHE_FILENAME
+    
+    if not cache_path.exists():
+        return None
+    
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            cached_list = json.load(f)
+        
+        # Validate structure
+        if not isinstance(cached_list, dict):
+            return None
+        
+        package_count = len([k for k in cached_list.keys() if not k.startswith('_')])
+        log.info(f"📦 Using cached affected-packages.json ({package_count} packages).")
+        
+        return cached_list
+        
+    except (json.JSONDecodeError, IOError):
+        return None
+
+def save_cached_badlist(affected_list):
+    """
+    Saves affected list to cache file in current directory.
+    """
+    cache_path = Path.cwd() / CACHE_FILENAME
+    
+    try:
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(affected_list, f, indent=2)
+        log.debug(f"Cached affected list to {cache_path}")
+    except IOError as e:
+        log.warn(f"Failed to cache affected list: {e}")
+
 def get_badlist():
     """
-    Gets affected list by fetching fresh data on every run, with local fallback only if remote fails.
+    Gets affected list by checking cache first, then fetching fresh data if needed.
     Returns affected list dictionary
     """
+    # First check if we have a cached version
+    cached_list = load_cached_badlist()
+    if cached_list is not None:
+        return cached_list
+    
     try:
-        # Always try to fetch fresh data first
-        return fetch_remote_affected_list()
+        # Fetch fresh data and cache it
+        affected_list = fetch_remote_affected_list()
+        save_cached_badlist(affected_list)
+        return affected_list
+        
     except Exception as error:
-        # Only use local file if remote fetch fails
+        # Only use local fallback file if remote fetch fails and no cache exists
         log.warn(f"Remote fetch failed: {error}")
         log.info("Falling back to local affected-packages.json...")
         
